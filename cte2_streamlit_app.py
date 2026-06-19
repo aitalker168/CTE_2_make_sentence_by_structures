@@ -81,69 +81,94 @@ st.set_page_config(page_title="指定结构AI出题练习程序", page_icon="�
 st.title("📝 指定结构AI出题练习程序（语音版）")
 st.markdown("---")
 
-# ---------- 内嵌语音识别组件 ----------
+# ---------- 语音组件（修复版本） ----------
 def voice_input_component(text_area_key):
-    """
-    嵌入一个浏览器语音识别按钮，识别结果自动填入 Streamlit 的 text_area
-    """
-    component_html = f"""
-    <div style="margin-bottom:10px;">
-        <button id="voiceBtn" style="
-            padding:12px 24px; font-size:18px; border:none; border-radius:8px;
+    """使用浏览器 Web Speech API，识别结果自动填入 Streamlit 文本框"""
+    html_code = f"""
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+        <button id="voiceBtn_{text_area_key}" style="
+            padding:10px 22px; font-size:16px; border:none; border-radius:6px;
             background-color:#4CAF50; color:white; cursor:pointer;
         ">🎤 开始录音</button>
-        <span id="status" style="margin-left:15px; color:#666;">点击后说话，自动识别</span>
+        <span id="voiceStatus_{text_area_key}" style="color:#666;">点击后说话，自动识别</span>
     </div>
     <script>
     (function() {{
-        const btn = document.getElementById('voiceBtn');
-        const status = document.getElementById('status');
-        const textarea = parent.document.querySelector('textarea[data-testid="stTextArea"][aria-label="' + '{text_area_key}' + '"]');
+        var btn = document.getElementById('voiceBtn_{text_area_key}');
+        var status = document.getElementById('voiceStatus_{text_area_key}');
+        // 查找 Streamlit 的 textarea（通过 aria-label）
+        var textarea = document.querySelector('textarea[aria-label="{text_area_key}"]');
         if (!textarea) {{
-            status.innerText = '文本框未找到';
-            return;
-        }}
-        if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {{
-            status.innerText = '浏览器不支持语音识别，请使用Chrome/Edge';
+            status.innerText = '❌ 未找到输入框，请刷新';
             btn.disabled = true;
             return;
         }}
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        let recognition = null;
-        btn.onclick = function() {{
-            if (recognition && btn.innerText === '⏹ 停止录音') {{
-                recognition.stop();
+        var recognition = null;
+        var isRecording = false;
+
+        function handleResult(transcript) {{
+            textarea.value = transcript;
+            // 触发 Streamlit 的输入事件
+            var event = new Event('input', {{ bubbles: true }});
+            textarea.dispatchEvent(event);
+            status.innerText = '✅ 识别成功: ' + transcript;
+        }}
+
+        function handleError(error) {{
+            status.innerText = '❌ 识别错误: ' + (error.message || error);
+        }}
+
+        btn.addEventListener('click', function() {{
+            if (isRecording) {{
+                // 停止录音
+                if (recognition) {{
+                    recognition.stop();
+                    recognition = null;
+                }}
+                isRecording = false;
                 btn.innerText = '🎤 开始录音';
                 btn.style.backgroundColor = '#4CAF50';
-                recognition = null;
                 return;
             }}
+
+            // 检查浏览器支持
+            var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SpeechRecognition) {{
+                status.innerText = '❌ 浏览器不支持语音识别，请用 Chrome/Edge';
+                return;
+            }}
+
             recognition = new SpeechRecognition();
             recognition.lang = 'en-US';
             recognition.interimResults = false;
             recognition.continuous = false;
+
             recognition.onresult = function(event) {{
-                const transcript = event.results[0][0].transcript;
-                textarea.value = transcript;
-                textarea.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                status.innerText = '识别结果: ' + transcript;
-                btn.innerText = '🎤 开始录音';
-                btn.style.backgroundColor = '#4CAF50';
+                var transcript = event.results[0][0].transcript;
+                handleResult(transcript);
             }};
             recognition.onerror = function(event) {{
-                status.innerText = '识别错误: ' + event.error;
-                btn.innerText = '🎤 开始录音';
-                btn.style.backgroundColor = '#4CAF50';
+                handleError(event.error);
             }};
+            recognition.onend = function() {{
+                if (isRecording) {{
+                    // 如果仍然标记为录音中，说明非正常结束，重置状态
+                    isRecording = false;
+                    btn.innerText = '🎤 开始录音';
+                    btn.style.backgroundColor = '#4CAF50';
+                }}
+            }};
+
             recognition.start();
+            isRecording = true;
             btn.innerText = '⏹ 停止录音';
             btn.style.backgroundColor = '#f44336';
-            status.innerText = '录音中...';
-        }};
+            status.innerText = '🎙️ 录音中...';
+        }});
     }})();
     </script>
     """
-    st.markdown(component_html, unsafe_allow_html=True)
+    st.markdown(html_code, unsafe_allow_html=True)
 
 # ---------- 第一步 ----------
 if st.session_state.step == 1:
@@ -188,11 +213,11 @@ if st.session_state.step == 2:
     st.subheader(f"第 {idx+1} / 5 题")
     st.info(f"中文：{sentences[idx]}")
 
-    # 语音输入组件（与下方 text_area 绑定）
+    # 语音组件
     text_area_key = f"english_{idx}"
     voice_input_component(text_area_key)
 
-    # 文本输入（语音识别结果会自动填入，也可手动修改）
+    # 文本输入框（语音识别结果自动填入）
     user_english = st.text_area("输入您的英文句子", key=text_area_key, height=80)
 
     col1, col2, col3 = st.columns([2, 2, 2])
