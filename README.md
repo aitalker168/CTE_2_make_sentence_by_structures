@@ -1,0 +1,1 @@
+# CTE_2_make_sentence_by_structures
