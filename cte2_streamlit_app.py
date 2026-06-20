@@ -1,6 +1,5 @@
-# ===== cte2_streamlit_app.py (可点击+自动填入+布局稳定) =====
+# ===== cte2_streamlit_app.py (最终稳定版) =====
 import streamlit as st
-import streamlit.components.v1 as components
 import requests
 import re
 
@@ -9,7 +8,7 @@ if "GITHUB_TOKEN" not in st.secrets:
 else:
     GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]
 if not GITHUB_TOKEN:
-    st.warning("请先设置 Token")
+    st.warning("请先设置 GitHub Token（侧边栏或 Secrets）")
     st.stop()
 
 HEADERS = {"Authorization": f"Bearer {GITHUB_TOKEN}", "Content-Type": "application/json"}
@@ -31,93 +30,101 @@ REV_PROMPT = "你是一个英语句型训练教练。用户给你一个中文句
 if "step" not in st.session_state:
     st.session_state.step=1; st.session_state.sentences=[]; st.session_state.idx=0
     st.session_state.full=""; st.session_state.questions=""; st.session_state.show_answer=False
-    st.session_state.voice_result = ""  # 存储语音识别结果
 
 st.set_page_config(page_title="指定结构AI出题练习程序", page_icon="🎙️")
 st.title("🎙️ 指定结构AI出题练习程序")
 st.markdown("---")
 
-# ---------- 语音组件（返回识别文本）----------
-def voice_component(key):
-    html = f"""
+# ---------- 语音按钮（纯JS直接修改文本框，不返回值） ----------
+def voice_script():
+    """嵌入语音按钮，识别后自动填入页面上最后一个 textarea"""
+    html = """
     <div style="margin:8px 0; display:flex; align-items:center; gap:10px;">
-        <button id="voiceBtn_{key}" onclick="startVoice('{key}')" style="
+        <button id="voiceBtn" onclick="toggleVoice()" style="
             padding:10px 20px; font-size:16px; border:none; border-radius:6px;
             background-color:#4CAF50; color:white; cursor:pointer;
         ">🎤 开始录音</button>
-        <span id="voiceStatus_{key}" style="color:#666;">点击后说话</span>
+        <span id="voiceStatus" style="color:#666;">点击后说话</span>
     </div>
     <script>
-    function startVoice(key) {{
-        var btn = document.getElementById('voiceBtn_' + key);
-        var status = document.getElementById('voiceStatus_' + key);
-        if (btn.innerText.includes('停止')) {{
-            // 停止录音
-            if (window.recognition) {{
-                window.recognition.stop();
-                window.recognition = null;
-            }}
+    var rec = null;
+    var isRecording = false;
+    function toggleVoice() {
+        var btn = document.getElementById('voiceBtn');
+        var status = document.getElementById('voiceStatus');
+        if (isRecording) {
+            if (rec) { rec.stop(); rec = null; }
+            isRecording = false;
             btn.innerText = '🎤 开始录音';
             btn.style.backgroundColor = '#4CAF50';
             return;
-        }}
+        }
         var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) {{ status.innerText = '❌ 浏览器不支持'; return; }}
-        var recognition = new SpeechRecognition();
-        recognition.lang = 'en-US';
-        recognition.interimResults = false;
-        recognition.continuous = false;
-        recognition.onresult = function(event) {{
+        if (!SpeechRecognition) { status.innerText = '❌ 浏览器不支持'; return; }
+        rec = new SpeechRecognition();
+        rec.lang = 'en-US';
+        rec.interimResults = false;
+        rec.continuous = false;
+        rec.onresult = function(event) {
             var transcript = event.results[0][0].transcript;
             status.innerText = '✅ ' + transcript;
-            // 通过 setComponentValue 回流
-            if (window.Streamlit) window.Streamlit.setComponentValue(transcript);
-            else if (parent && parent.Streamlit) parent.Streamlit.setComponentValue(transcript);
+            // 自动填入页面最后一个 textarea
+            var textareas = document.querySelectorAll('textarea');
+            if (textareas.length > 0) {
+                var ta = textareas[textareas.length - 1];
+                ta.value = transcript;
+                ta.dispatchEvent(new Event('input', { bubbles: true }));
+            }
             btn.innerText = '🎤 开始录音';
             btn.style.backgroundColor = '#4CAF50';
-        }};
-        recognition.onerror = function(event) {{
+            isRecording = false;
+        };
+        rec.onerror = function(event) {
             status.innerText = '❌ 错误: ' + event.error;
             btn.innerText = '🎤 开始录音';
             btn.style.backgroundColor = '#4CAF50';
-        }};
-        recognition.onend = function() {{
-            if (btn.innerText.includes('停止')) {{
+            isRecording = false;
+        };
+        rec.onend = function() {
+            if (isRecording) {
+                isRecording = false;
                 btn.innerText = '🎤 开始录音';
                 btn.style.backgroundColor = '#4CAF50';
-            }}
-        }};
-        recognition.start();
-        window.recognition = recognition;
+            }
+        };
+        rec.start();
+        isRecording = true;
         btn.innerText = '⏹ 停止录音';
         btn.style.backgroundColor = '#f44336';
         status.innerText = '🎙️ 录音中...';
-    }}
+    }
     </script>
     """
-    result = components.html(html, height=80)
-    return result
+    st.markdown(html, unsafe_allow_html=True)
 
 # ---------- 第一步 ----------
 if st.session_state.step == 1:
     st.header("第一步：输入指定句型结构")
     structure = st.text_input("请输入英语句型结构（如 as...as, not only...but also 等）", placeholder="例如：as...as")
     if st.button("生成5个中文题目", type="primary"):
-        if not structure: st.error("请输入句型结构")
+        if not structure:
+            st.error("请输入句型结构")
         else:
             with st.spinner("生成中..."):
                 text = call_ai(GEN_PROMPT, f"句型结构：{structure}")
-            if text.startswith("["): st.error(text)
+            if text.startswith("["):
+                st.error(text)
             else:
                 lines = [l.strip() for l in text.split('\n') if l.strip()]
                 sentences = []
                 for line in lines:
                     line_clean = re.sub(r'^\d+[.、]\s*', '', line)
-                    if line_clean: sentences.append(line_clean)
-                while len(sentences) < 5: sentences.append("")
+                    if line_clean:
+                        sentences.append(line_clean)
+                while len(sentences) < 5:
+                    sentences.append("")
                 st.session_state.sentences = sentences
                 st.session_state.idx = 0
-                st.session_state.voice_result = ""
                 st.session_state.step = 2
                 st.rerun()
 
@@ -137,18 +144,9 @@ if st.session_state.step == 2:
     st.subheader(f"第 {idx+1} / 5 题")
     st.info(f"中文：{sentences[idx]}")
 
-    # 语音组件（返回识别文本）
-    voice_result = voice_component(str(idx))
+    voice_script()  # 语音按钮（无返回值）
 
-    # 如果语音返回了新文本，更新 session_state，并 rerun 以更新文本框
-    if voice_result and voice_result != st.session_state.voice_result:
-        st.session_state.voice_result = voice_result
-        st.rerun()
-
-    # 文本框：初始值为 session_state.voice_result（语音结果自动显示）
-    default_val = st.session_state.voice_result
     user_english = st.text_area("输入您的英文句子（语音识别结果自动填入）",
-                                value=default_val,
                                 key=f"eng_{idx}",
                                 height=80)
 
@@ -177,7 +175,6 @@ if st.session_state.step == 2:
                 question_lines.append(line)
             st.session_state.questions = "\n".join(question_lines).strip()
             st.session_state.show_answer = False
-            st.session_state.voice_result = ""  # 清空，避免影响下一题
             st.rerun()
 
     if st.session_state.full:
@@ -194,5 +191,4 @@ if st.session_state.step == 2:
             st.session_state.full = ""
             st.session_state.questions = ""
             st.session_state.show_answer = False
-            st.session_state.voice_result = ""
             st.rerun()
