@@ -1,6 +1,5 @@
-# ===== cte2_streamlit_app.py (方案 B) =====
+# ===== cte2_streamlit_app.py (稳定版) =====
 import streamlit as st
-import streamlit.components.v1 as components
 import requests
 import re
 
@@ -31,7 +30,7 @@ def call_ai(system: str, user: str, temp=0.5, max_tokens=2000, timeout=60):
     except Exception as e:
         return f"[网络错] {e}"
 
-# Prompt 模板（与之前一致）
+# ---------- Prompt ----------
 GEN_PROMPT = (
     "你是一个英语句型出题教练。用户给你一个英语句型结构，请生成5个中文句子，每个句子必须能用该句型翻译成英文，且尽量使用简单的日常词汇。\n"
     "输出格式：\n1. 第一个中文句子\n2. 第二个中文句子\n3. 第三个中文句子\n4. 第四个中文句子\n5. 第五个中文句子\n直接输出，不要多余解释。"
@@ -65,31 +64,46 @@ if "step" not in st.session_state:
     st.session_state.full_review = ""
     st.session_state.questions_only = ""
     st.session_state.answer_shown = False
-    st.session_state.voice_result = ""   # 存储语音识别结果
+    st.session_state.voice_result = ""
 
 st.set_page_config(page_title="指定结构AI出题练习程序", page_icon="🎙️")
 st.title("🎙️ 指定结构AI出题练习程序（语音版）")
 st.markdown("---")
 
-# ---------- 语音识别组件（自动返回结果）----------
-def voice_input_component(key_suffix: str):
-    """
-    嵌入一个语音识别按钮，识别结果通过 setComponentValue 返回
-    """
-    html_code = f"""
+# ---------- 语音按钮（不返回组件值，直接在 DOM 中填入文本框） ----------
+def voice_input_script(text_area_key: str):
+    """嵌入语音识别按钮，识别后自动填入指定 key 的 st.text_area"""
+    html = f"""
     <div style="margin:8px 0; display:flex; align-items:center; gap:10px;">
-        <button id="voiceBtn_{key_suffix}" style="
+        <button id="voiceBtn_{text_area_key}" style="
             padding:10px 20px; font-size:16px; border:none; border-radius:6px;
             background-color:#4CAF50; color:white; cursor:pointer;
         ">🎤 开始录音</button>
-        <span id="voiceStatus_{key_suffix}" style="color:#666;">点击后说话</span>
+        <span id="voiceStatus_{text_area_key}" style="color:#666;">点击后说话</span>
     </div>
     <script>
     (function() {{
-        const btn = document.getElementById('voiceBtn_{key_suffix}');
-        const status = document.getElementById('voiceStatus_{key_suffix}');
+        const btn = document.getElementById('voiceBtn_{text_area_key}');
+        const status = document.getElementById('voiceStatus_{text_area_key}');
         let recognition = null;
         let isRecording = false;
+
+        // 辅助函数：查找并填充文本框
+        function fillTextarea(text) {{
+            // 首先尝试通过 aria-label 查找
+            let ta = document.querySelector('textarea[aria-label="{text_area_key}"]');
+            if (!ta) {{
+                // 备用：通过 data-testid 和 key 查找（Streamlit 内部）
+                ta = document.querySelector('textarea[data-testid="stTextArea"]');
+            }}
+            if (ta) {{
+                const nativeSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+                nativeSetter.call(ta, text);
+                ta.dispatchEvent(new Event('input', {{ bubbles: true }}));
+            }} else {{
+                status.innerText = '❌ 未找到输入框';
+            }}
+        }}
 
         btn.onclick = function() {{
             if (isRecording) {{
@@ -100,7 +114,6 @@ def voice_input_component(key_suffix: str):
                 isRecording = false;
                 btn.innerText = '🎤 开始录音';
                 btn.style.backgroundColor = '#4CAF50';
-                status.innerText = '已停止';
                 return;
             }}
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -116,12 +129,7 @@ def voice_input_component(key_suffix: str):
             recognition.onresult = function(event) {{
                 const transcript = event.results[0][0].transcript;
                 status.innerText = '✅ ' + transcript;
-                // 回传给 Streamlit
-                if (window.Streamlit) {{
-                    window.Streamlit.setComponentValue(transcript);
-                }} else if (parent && parent.Streamlit) {{
-                    parent.Streamlit.setComponentValue(transcript);
-                }}
+                fillTextarea(transcript);
                 btn.innerText = '🎤 开始录音';
                 btn.style.backgroundColor = '#4CAF50';
                 isRecording = false;
@@ -148,9 +156,7 @@ def voice_input_component(key_suffix: str):
     }})();
     </script>
     """
-    # components.html 返回值即为 setComponentValue 设定的值
-    result = components.html(html_code, height=80)
-    return result
+    st.markdown(html, unsafe_allow_html=True)
 
 # ---------- 第一步 ----------
 if st.session_state.step == 1:
@@ -196,18 +202,13 @@ if st.session_state.step == 2:
     st.subheader(f"第 {idx+1} / 5 题")
     st.info(f"中文：{sentences[idx]}")
 
-    # 语音识别按钮（自动返回结果）
-    voice_text = voice_input_component(str(idx))
-    # 如果返回了新的语音结果，存入 session_state
-    if voice_text:
-        st.session_state.voice_result = voice_text
-        st.rerun()
+    # 语音按钮（不返回值，直接填充下方文本框）
+    ta_key = f"english_{idx}"
+    voice_input_script(ta_key)
 
-    # 文本输入框（优先显示语音结果，可手动修改）
-    default_value = st.session_state.voice_result
-    user_english = st.text_area("输入您的英文句子（语音识别结果自动填入）", 
-                                value=default_value, 
-                                key=f"english_{idx}",
+    # 文本输入框（语音结果自动填入）
+    user_english = st.text_area("输入您的英文句子（语音识别结果自动填入）",
+                                key=ta_key,
                                 height=80)
 
     col1, col2, col3 = st.columns([2, 2, 2])
@@ -219,6 +220,7 @@ if st.session_state.step == 2:
         next_question = st.button("Next →")
 
     if submit_review:
+        # 注意：user_english 的值在提交时会被 Streamlit 自动获取（包括 JS 修改后的值）
         if not user_english.strip():
             st.warning("请输入英文")
         else:
@@ -235,7 +237,7 @@ if st.session_state.step == 2:
                 question_lines.append(line)
             st.session_state.questions_only = "\n".join(question_lines).strip()
             st.session_state.answer_shown = False
-            st.session_state.voice_result = ""  # 清空语音结果，避免影响下一题
+            st.session_state.voice_result = ""
             st.rerun()
 
     if st.session_state.full_review:
