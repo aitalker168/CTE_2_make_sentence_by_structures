@@ -1,4 +1,4 @@
-# ===== cte2_streamlit_app.py (最终融合版) =====
+# ===== cte2_streamlit_app.py (带朗读功能) =====
 import streamlit as st
 import streamlit.components.v1 as components
 import requests
@@ -38,7 +38,6 @@ st.markdown("---")
 
 # ---------- 语音组件（components.html 确保按钮可点击；返回值被忽略）----------
 def voice_component():
-    """返回的 voice_result 我们不使用，避免 rerun"""
     html = """
     <div style="margin:8px 0; display:flex; align-items:center; gap:10px;">
         <button id="voiceBtn" onclick="toggleVoice()" style="
@@ -69,14 +68,12 @@ def voice_component():
         rec.onresult = function(event) {
             var transcript = event.results[0][0].transcript;
             status.innerText = '✅ ' + transcript;
-            // 方法1：直接修改页面上最后一个 textarea（最可靠）
             var textareas = document.querySelectorAll('textarea');
             if (textareas.length > 0) {
                 var ta = textareas[textareas.length - 1];
                 ta.value = transcript;
                 ta.dispatchEvent(new Event('input', { bubbles: true }));
             }
-            // 方法2：通过 setComponentValue 回传（Python 端忽略返回值，但保证组件有响应）
             try {
                 if (window.Streamlit) window.Streamlit.setComponentValue(transcript);
                 else if (parent && parent.Streamlit) parent.Streamlit.setComponentValue(transcript);
@@ -106,9 +103,30 @@ def voice_component():
     }
     </script>
     """
-    # 返回结果我们完全忽略（不赋给任何变量）
     components.html(html, height=80)
-    return  # 不返回任何值
+    return
+
+# ---------- 中文朗读按钮 ----------
+def chinese_tts_button(chinese_text):
+    """嵌入一个朗读按钮，点击后朗读中文"""
+    safe_text = chinese_text.replace("'", "\\'").replace("\n", " ")
+    html = f"""
+    <div style="display:inline-flex; align-items:center; margin-bottom:5px;">
+        <button id="ttsBtn" onclick="speakChinese()" style="
+            padding:4px 14px; font-size:14px; border:none; border-radius:4px;
+            background-color:#2196F3; color:white; cursor:pointer; margin-left:10px;
+        ">🔊 朗读</button>
+    </div>
+    <script>
+    function speakChinese() {{
+        var text = '{safe_text}';
+        var utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'zh-CN';
+        window.speechSynthesis.speak(utterance);
+    }}
+    </script>
+    """
+    st.markdown(html, unsafe_allow_html=True)
 
 # ---------- 第一步 ----------
 if st.session_state.step == 1:
@@ -146,9 +164,14 @@ if st.session_state.step == 2:
         st.stop()
 
     st.subheader(f"第 {idx+1} / 5 题")
-    st.info(f"中文：{sentences[idx]}")
+    # 显示中文题目 + 朗读按钮
+    col_chinese, col_tts = st.columns([10, 1])
+    with col_chinese:
+        st.info(f"中文：{sentences[idx]}")
+    with col_tts:
+        chinese_tts_button(sentences[idx])
 
-    # 语音按钮（返回值被忽略，不触发 rerun）
+    # 语音按钮（返回值被忽略）
     voice_component()
 
     user_english = st.text_area("输入您的英文句子（语音识别结果自动填入）",
